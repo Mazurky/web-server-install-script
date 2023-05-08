@@ -184,6 +184,7 @@ function createDomainForUser {
     db_password=$(openssl rand -base64 8)
     sudo mkdir /var/www/"$user"/"$domain"
     sudo cp ./lib/index.php /var/www/"$user"/"$domain"/
+    chown -R "$user":www-data /var/www/"$user"
     sudo sed -i "s/%user%/$user/g" /var/www/"$user"/"$domain"/index.php
     sudo sed -i "s/%password%/$db_password/g" /var/www/"$user"/"$domain"/index.php
     sudo sed -i "s/%databaseName%/$domain/g" /var/www/"$user"/"$domain"/index.php
@@ -191,7 +192,6 @@ function createDomainForUser {
     sudo /bin/sh -c "mysql -e \"CREATE DATABASE $user\""
     sudo /bin/sh -c "mysql -e \"GRANT ALL PRIVILEGES ON $user.* TO '$user'@'localhost' IDENTIFIED BY '$db_password';\""
     sudo /bin/sh -c "mysql -e \"FLUSH PRIVILEGES;\""
-    #create DatabaseAndUser nie cez funkciu ale iba normalne kod
 }
 
 function addUser {
