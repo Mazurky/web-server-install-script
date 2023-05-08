@@ -3,6 +3,7 @@ RED='\e[31m'
 GREEN='\e[32m'
 YELLOW='\e[33m'
 ENDECHO='\e[0m'
+
 #Overenie ci je pouzivatel v sudo skupine
 if [ "$(groups "$USER" | grep -c -E '\bsudo\b|\broot\b')" -eq 0 ]; then
     echo "You don't have permissions to run this script. Please run as sudo."
@@ -21,10 +22,11 @@ OS=$(grep '\bID=\b' /etc/os-release | cut -d= -f2)
 OS_LIKE=$(grep '\bID_LIKE\b' /etc/os-release | cut -d= -f2 | tr -d '"' | grep -E -c 'debian|ubuntu')
 
 if [[ "${OS}" != "pop" ]] || [ "${OS_LIKE}" -eq 0 ]; then
-    echo -e "${YELLOW}Your operating system may not work properly with this script."
-    echo -e "However, if your system is using ${RED}apt${YELLOW}, this script may work.${ENDECHO}"
+    echo -e "${YELLOW}This script wasn't tested on your operating system. (pop, debian, ubuntu)"
+    echo -e "If your system is using ${RED}apt${YELLOW}, this script may work.${ENDECHO}"
+    
     until [[ ${CONTINUE} =~ ^[YyNn]$ ]]; do
-        read -p "Would you like to continue? [y/N]: " -n 1 -r CONTINUE
+        read -p "Would you like to continue? [y/N]: " -r -n 1 CONTINUE
         echo ""
     done
     if [[ ! ${CONTINUE} =~ ^[Yy]$ ]]; then
@@ -32,6 +34,12 @@ if [[ "${OS}" != "pop" ]] || [ "${OS_LIKE}" -eq 0 ]; then
         exit 0
     fi
 fi
+
+# $1 - sprava
+function initMessage {
+    echo ""
+    echo -e "${YELLOW} - $1${ENDECHO}"
+}
 
 # $1 - exit kód
 # $2 - success message
@@ -43,25 +51,6 @@ function outputParser {
         echo -e "${RED} - $3${ENDECHO}"
         exit 1
     fi
-}
-
-# $1 - sprava
-function initMessage {
-    echo ""
-    echo -e "${YELLOW} - $1${ENDECHO}"
-}
-
-function configFile {
-    sudo touch /etc/apache2/sites-available/awiconfig.conf
-    sudo chmod 644 /etc/apache2/sites-available/awiconfig.conf
-    sudo echo "<VirtualHost *:80>" >> /etc/apache2/sites-available/awiconfig.conf
-    sudo echo "    ServerAdmin webmaster@localhost" >> /etc/apache2/sites-available/awiconfig.conf
-    sudo echo "    DocumentRoot /var/www/awiconfig" >> /etc/apache2/sites-available/awiconfig.conf
-    sudo echo "    ErrorLog ${APACHE_LOG_DIR}/error.log" >> /etc/apache2/sites-available/awiconfig.conf
-    sudo echo "    CustomLog ${APACHE_LOG_DIR}/access.log combined" >> /etc/apache2/sites-available/awiconfig.conf
-    sudo echo "</VirtualHost>" >> /etc/apache2/sites-available/awiconfig.conf
-    sudo a2ensite awiconfig.conf
-    sudo systemctl reload apache2
 }
 
 function initialInstall {
@@ -82,11 +71,12 @@ function initialInstall {
     sudo apt install mariadb-server -y
     outputParser $? "MariaDB installed successfully." "An error occured while installing MariaDB. Reffer to error."
     
-    initMessage "Securing MariaDB"
-    initMessage "Please follow the instructions below."
+    initMessage "Securing MariaDB. Please follow the instructions below."
     echo "Example answers can be found here: https://haste.mazurky.eu/raw/mysql_secure_installation"
-    read -rp "Press enter to continue..."
+    echo "Press any key to continue..."
+    read -r -n 1
     sudo mysql_secure_installation
+    outputParser $? "MariaDB secured successfully." "An error occured while securing MariaDB. Reffer to error."
     
     initMessage "Installing php and recomended modules"
     sudo apt install php libapache2-mod-php php-mysql php-common php-zip php-gd php-mbstring php-curl php-xml -y
@@ -106,22 +96,87 @@ function initialInstall {
     
     initMessage "Web administrator setup"
     sudo useradd -c "Webovy Administrator" -d /var/www -s /bin/bash webadmin
-    initMessage "Please enter password for webadmin user"
+    echo "Please enter password for webadmin user"
     sudo passwd webadmin
     outputParser $? "Webadmin user created successfully." "An error occured while creating webadmin user. Reffer to error."
     
-    initMessage "Setting webadmin user permissions"
+    initMessage "Setting webadmin's permissions"
     sudo usermod -a -G www-data webadmin && sudo chown -R webadmin:www-data /var/www && sudo chmod -R 770 /var/www
+    sudo touch /var/www/.users
     outputParser $? "Permissions set successfully." "An error occured while setting permissions. Reffer to error."
     
-    initMessage "Creating apache configuration"
+    initMessage "Default website can be found at http://localhost"
+}
+
+
+function createDomainForuser {
+    initMessage "Creating user website"
+    echo "Select user from avaiable users!"
+    echo ""
+    echo "Users:"
+    counter=1
+    while IFS= read -r line; do
+        echo "   $counter) $line"
+        counter=$((counter+1))
+    done < "/var/www/.users"
+    coutner=$((counter-1))
+
+    until [[ ${PICKED_OPTION} =~ ^[1-${counter}]$ ]]; do
+        read -p "Select user [1-$counter]: " -r -n 1 PICKED_OPTION
+    done
+
+    #niečo na štul hashmap alebo cista array kde vyrbane cislo bude v podstate index a array bude
+    #1=janko, 2=ferko, 3=hanka
+    user="text"
+
+    #if [ $# -eq 0 ]; then
+    #    until [[ ${user} =~ ^[a-z]+$ ]]; do
+    #        read -p "Enter user name: " -r user
+    #    done
+    #else
+    #    user=$1
+    #fi
     
+    echo "Enter only the domain name without .tld"
+    until [[ ${domainName} =~ ^[a-z]+$ ]]; do
+        read -p "Enter domain name: [google]" -r domainName
+    done
+    
+    domain="$domainName.$user.localhost"
+    sudo cp ./lib/domain.conf /etc/apache2/sites-available/"$domain".conf
+    
+    sudo sed -i "s/%domain_name%/$domain/g" /etc/apache2/sites-available/"$domain".conf
+    sudo sed -i "s/%user%/$user/g" /etc/apache2/sites-available/"$domain".conf
+    sudo a2enssite /etc/apache2/sites-available/"$domain".conf
+    outputParser $? "Domain created successfully." "An error occured while creating domain. Reffer to error."
+    initMessage "Test website is located at http://$domain and it's folder is in /var/www/$user/$domain"
+    sudo cp /var/www/html/index.html /var/www/"$user"/"domain"/
+
+    ##createDatabaseAndUser nie cez funkciu ale iba normalne kod
 }
 
 function addUser {
-    echo "Adding new user"
-    #sudo chown jozko:www-data /var/www/jozko
-    #sudo chmod 750 /var/www/jozko
+    initMessage "Adding new user"
+    until [[ ${username} =~ ^[a-z]+$ ]]; do
+        read -p "Enter username [lowercase]: " -r username
+    done
+    echo ""
+    until [[ ${nameSurname} =~ ^[a-zA-Z]+$ ]]; do
+        read -p "Enter your name: " -r nameSurname
+    done
+    echo ""
+    
+    sudo mkdir /var/www/"${username}"/
+    sudo useradd -c "${nameSurname}" -d /var/www/"${username}" -s /bin/bash "${username}"
+    sudo chown -R "${username}":www-data /var/www/"${username}"
+    sudo chmod -R 750 /var/www/"${username}"
+    
+    echo "Please enter password for ${username}"
+    sudo passwd "${username}"
+    outputParser $? "User created successfully." "An error occured while creating user. Reffer to error."
+    echo "$username" >> /var/www/.users
+    
+    createDomainForuser    
     
 }
 
@@ -135,7 +190,9 @@ function listUsers {
 
 function uninstall {
     echo -e "${YELLOW} - Uninstalling web server (apache2, php and mariaDB)${ENDECHO}"
+    sudo rm -rf /etc/apache2/.installedWithAWI
     sudo apt purge apache2 php mariadb-server -y
+    sudo apt autoremove -y
     outputParser $? "Web server uninstalled successfully." "An error occured while uninstalling web server. Reffer to error."
 }
 
@@ -147,28 +204,32 @@ function menu() {
         echo ""
         echo "Options:"
         echo "   1) Add new user"
-        echo "   2) Remove existing user"
-        echo "   3) List all users"
-        echo "   4) Uninstall web server (apache2, php and mariaDB)"
-        echo "   5) Exit"
+        echo "   2) Create domain for user"
+        echo "   3) Remove existing user"
+        echo "   4) List all users"
+        echo "   5) Uninstall web server (apache2, php and mariaDB)"
+        echo "   6) Exit"
         
-        until [[ ${PICKED_OPTION} =~ ^[1-5]$ ]]; do
-            read -rp "Select option [1-5]: " PICKED_OPTION
+        until [[ ${PICKED_OPTION} =~ ^[1-6]$ ]]; do
+            read -p "Select option [1-6]: " -r -n 1 PICKED_OPTION
         done
         case "${PICKED_OPTION}" in
             1)
                 addUser
             ;;
             2)
-                removeUser
+                createDomainForuser
             ;;
             3)
-                listUsers
+                removeUser
             ;;
             4)
-                uninstall
+                listUsers
             ;;
             5)
+                uninstall
+            ;;
+            6)
                 exit 0
             ;;
         esac
@@ -180,7 +241,7 @@ function menu() {
         echo "   2) Exit"
         
         until [[ ${PICKED_OPTION} =~ ^[1-2]$ ]]; do
-            read -rp "Select option [1-2]: " PICKED_OPTION
+            read -p "Select option [1-2]: " -r -n 1 PICKED_OPTION
         done
         case "${PICKED_OPTION}" in
             1)
