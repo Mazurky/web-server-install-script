@@ -17,9 +17,6 @@ ENDCOLOR='\e[0m'
 # - Vytvorenie databázy pre používateľa
 
 
-
-
-
 echo "Welcome to apache web server installer & manager!"
 #Overenie ci je pouzivatel v sudo skupine
 if [ "$(groups "$USER" | grep -c -E '\bsudo\b|\broot\b')" -eq 0 ]; then
@@ -31,6 +28,7 @@ fi
 if [ "$(sudo apt-cache policy apache2 | grep "Installed:" | grep -c '\bnone\b')" -eq 0 ] && ! [ -f /etc/apache2/.installedWithAWI ]; then
     echo "Apache2 was installed without using this script."
     echo "This script will not work properly."
+    echo "Exiting..."
     exit 0
 fi
 
@@ -52,15 +50,16 @@ if [[ "${OS}" != "pop" ]] || [ "${OS_LIKE}" -eq 0 ]; then
     fi
 fi
 
-# $1 - sprava
+
+# $1 - message
 function initMessage {
     echo ""
     echo -e "${YELLOW} - $1${ENDCOLOR}"
 }
 
-# $1 - exit kód
+# $1 - exit code
 # $2 - success message
-# $3 - eror sprava
+# $3 - error message
 function outputParser {
     if [ "$1" -eq 0 ]; then
         echo -e "${GREEN} - $2${ENDCOLOR}"
@@ -74,9 +73,6 @@ function initialInstall {
     initMessage "Updating system"
     sudo apt update -y && sudo apt upgrade -y
     outputParser $? "System succesfully updated." "An error occured while updating. Reffer to error."
-    
-    # Error example: https://img.mazurky.eu/2023/05/06/14-24-44_f67ef.png
-    # Platí to aj pre ostatné inštalácie
     
     initMessage "Installing web server (Apache2)"
     sudo apt install apache2 -y
@@ -111,7 +107,6 @@ function initialInstall {
     sudo systemctl enable mariadb
     outputParser $? "MariaDB enabled successfully." "An error occured while enabling MariaDB. Reffer to error."
     
-
     initMessage "Web administrator setup"
     sudo useradd -c "Webovy Administrator" -d /var/www -s /bin/bash webadmin
     echo "Please enter password for webadmin user"
@@ -127,7 +122,6 @@ function initialInstall {
     outputParser $? "Permissions set successfully." "An error occured while setting permissions. Reffer to error."
     sudo rm -rf /var/www/html/index.html 
     sudo cp ./lib/index_default.php /var/www/html/index.php
-
     initMessage "Default website can be found at http://localhost"
     echo "Default website and database will be deleted after first user is added."
 
@@ -135,7 +129,7 @@ function initialInstall {
     sudo /bin/sh -c "mysql -e \"CREATE DATABASE webadmin\""
     sudo /bin/sh -c "mysql -e \"GRANT ALL PRIVILEGES ON webadmin.* TO 'webadmin'@'localhost' IDENTIFIED BY 'webadmin';\""
     sudo /bin/sh -c "mysql -e \"FLUSH PRIVILEGES;\""
-
+    menu
 }
 
 
@@ -160,8 +154,6 @@ function createDomainForUser {
         echo ""
     done
 
-    #niečo na štul hashmap alebo cista array kde vyrbane cislo bude v podstate index a array bude
-    #1=janko, 2=ferko, 3=hanka
     user=${availableUsers[$pickedUser]}
     echo ""
     echo -e "User ${TURQUOISE}$user${ENDCOLOR} selected."
@@ -181,27 +173,28 @@ function createDomainForUser {
     sudo systemctl reload apache2
     outputParser $? "Domain created successfully." "An error occured while creating domain. Reffer to error."
     initMessage "Test website is located at http://$domain and it's folder is in /var/www/$user/$domain"
+
     db_password=$(openssl rand -base64 8)
     sudo mkdir /var/www/"$user"/"$domain"
     sudo cp ./lib/index.php /var/www/"$user"/"$domain"/
     chown -R "$user":www-data /var/www/"$user"
     sudo sed -i "s/%user%/$user/g" /var/www/"$user"/"$domain"/index.php
     sudo sed -i "s/%password%/$db_password/g" /var/www/"$user"/"$domain"/index.php
-    sudo sed -i "s/%databaseName%/$domain/g" /var/www/"$user"/"$domain"/index.php
+    sudo sed -i "s/%databaseName%/$domainName/g" /var/www/"$user"/"$domain"/index.php
 
-    sudo /bin/sh -c "mysql -e \"CREATE DATABASE $user\""
+    sudo /bin/sh -c "mysql -e \"CREATE DATABASE $domainName\""
     sudo /bin/sh -c "mysql -e \"GRANT ALL PRIVILEGES ON $user.* TO '$user'@'localhost' IDENTIFIED BY '$db_password';\""
     sudo /bin/sh -c "mysql -e \"FLUSH PRIVILEGES;\""
 }
 
 function addUser {
     initMessage "Adding new user"
-    until [[ ${username} =~ ^[a-z]+$ ]]; do
+    until [[ ${username} =~ ^[a-z0-9]+$ ]]; do
         read -p "Enter username [lowercase]: " -r username
     done
     echo ""
     until [[ ${nameSurname} =~ ^[a-zA-Z]+$ ]]; do
-        read -p "Enter your name: " -r nameSurname
+        read -p "Enter your name and surname: " -r nameSurname
     done
     echo ""
     
@@ -220,7 +213,29 @@ function addUser {
 }
 
 function removeUser {
-    echo "Removing existing user"
+    initMessage "Remove user"
+    echo "Select user from users!"
+    echo ""
+    echo "Users:"
+    counter=1
+    declare -A availableUsers
+    while IFS= read -r line; do
+        availableUsers[$counter]=$line
+        echo "   $counter) $line"
+        counter=$((counter+1))
+    done <<< "$(sudo cat /var/www/.users)"
+
+    counter=$((counter-1))
+
+    until [[ ${pickedUser} =~ ^[1-$counter]$ ]]; do
+        read -p "Select user [1-$counter]: " -r -n 1 pickedUser
+        echo ""
+    done
+
+    user=${availableUsers[$pickedUser]}
+    echo ""
+    echo -e "User ${TURQUOISE}$user${ENDCOLOR} selected."
+    echo ""
 }
 
 function listUsers {
@@ -245,7 +260,7 @@ function listUsers {
 function uninstall {
     echo -e "${YELLOW} - Uninstalling web server (apache2, php and mariaDB)${ENDCOLOR}"
     sudo rm -rf /etc/apache2/.installedWithAWI
-    sudo apt purge apache2 php mariadb-server -y
+    sudo apt purge apache2 php php* mariadb-server -y
     sudo apt autoremove -y
     outputParser $? "Web server uninstalled successfully." "An error occured while uninstalling web server. Reffer to error."
 }
@@ -284,6 +299,7 @@ function menu() {
                 uninstall
             ;;
             6)
+                echo "Exiting..."
                 exit 0
             ;;
         esac
@@ -302,10 +318,10 @@ function menu() {
                 initialInstall
             ;;
             2)
+                echo "Exiting..."
                 exit 0
             ;;
         esac
     fi
-    
 }
 menu

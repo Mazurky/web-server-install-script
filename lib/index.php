@@ -10,6 +10,6 @@ if ($db_handler->connect_error) {
 }
 
 echo "Mysql a PHP funguje!";
-
+echo phpinfo();
 
 ?>
