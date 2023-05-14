@@ -9,7 +9,10 @@ if ($db_handler->connect_error) {
     die("ERROR Connection failed: " . $db_handler->connect_error);
 }
 
-echo "Mysql a PHP funguje!";
+echo "Mysql a PHP funguje!<br>";
+$website_Owner = "%user%" . " " . "%password%";
+echo $website_Owner;
+echo "<br>";
 echo phpinfo();
 
 ?>

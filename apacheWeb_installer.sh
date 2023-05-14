@@ -5,26 +5,13 @@ YELLOW='\e[33m'
 TURQUOISE='\e[96m'
 ENDCOLOR='\e[0m'
 
-#COMPLETED:
-# - Inštalácia apache2
-# - Inštalácia MariaDB
-# - Inštalácia PHP a modulov
-# - Zabezpečenie MariaDB
-# - Vytvorenie webadmina a nastavenie práv
-# - Vytvorenie domény pre používateľa
-
-#TODO:
-# - Vytvorenie databázy pre používateľa
-
-
 echo "Welcome to apache web server installer & manager!"
-#Overenie ci je pouzivatel v sudo skupine
+
 if [ "$(groups "$USER" | grep -c -E '\bsudo\b|\broot\b')" -eq 0 ]; then
     echo "You don't have permissions to run this script. Please run as sudo."
     exit 1
 fi
 
-#Overenie ci je apache2 nainstalovany tymto skriptom pre spravne fungovanie configov
 if [ "$(sudo apt-cache policy apache2 | grep "Installed:" | grep -c '\bnone\b')" -eq 0 ] && ! [ -f /etc/apache2/.installedWithAWI ]; then
     echo "Apache2 was installed without using this script."
     echo "This script will not work properly."
@@ -32,7 +19,6 @@ if [ "$(sudo apt-cache policy apache2 | grep "Installed:" | grep -c '\bnone\b')"
     exit 0
 fi
 
-#Overenie operacneho systemu
 OS=$(grep '\bID=\b' /etc/os-release | cut -d= -f2)
 OS_LIKE=$(grep '\bID_LIKE\b' /etc/os-release | cut -d= -f2 | tr -d '"' | grep -E -c 'debian|ubuntu')
 
@@ -44,7 +30,7 @@ if [[ "${OS}" != "pop" ]] || [ "${OS_LIKE}" -eq 0 ]; then
         read -p "Would you like to continue? [y/N]: " -r -n 1 CONTINUE
         echo ""
     done
-    if [[ ! ${CONTINUE} =~ ^[Yy]$ ]]; then
+    if [[ ${CONTINUE} =~ ^[Nn]$ ]]; then
         echo "Exiting..."
         exit 0
     fi
@@ -107,55 +93,59 @@ function initialInstall {
     sudo systemctl enable mariadb
     outputParser $? "MariaDB enabled successfully." "An error occured while enabling MariaDB. Reffer to error."
     
-    initMessage "Web administrator setup"
-    sudo useradd -c "Webovy Administrator" -d /var/www -s /bin/bash webadmin
-    echo "Please enter password for webadmin user"
-    sudo passwd webadmin
-    outputParser $? "Webadmin user created successfully." "An error occured while creating webadmin user. Reffer to error."
+    initMessage "Creating system administrator"
+    sudo useradd -c "Administrator" -m -s /bin/bash admin
+    echo "Please enter password for admin user"
+    sudo passwd admin
+    outputParser $? "System administrator created successfully." "An error occured while creating system administrator. Reffer to error."
     
     initMessage "Setting webadmin's permissions"
-    sudo usermod -a -G sudo webadmin
-    sudo chmod -R 770 /var/www
-    sudo chown -R www-data:www-data /var/www
+    sudo usermod -a -G sudo admin
     sudo touch /var/www/.users
     
     outputParser $? "Permissions set successfully." "An error occured while setting permissions. Reffer to error."
     sudo rm -rf /var/www/html/index.html 
     sudo cp ./lib/index_default.php /var/www/html/index.php
-    initMessage "Default website can be found at http://localhost"
-    echo "Default website and database will be deleted after first user is added."
-
-    # Keďže root nemá heslo na mariadb, tak nemôžem isť cez mysql -uroot a -p....
-    sudo /bin/sh -c "mysql -e \"CREATE DATABASE webadmin\""
-    sudo /bin/sh -c "mysql -e \"GRANT ALL PRIVILEGES ON webadmin.* TO 'webadmin'@'localhost' IDENTIFIED BY 'webadmin';\""
+    sudo /bin/sh -c "mysql -e \"CREATE DATABASE admin\""
+    sudo /bin/sh -c "mysql -e \"GRANT ALL PRIVILEGES ON admin.* TO 'admin'@'localhost' IDENTIFIED BY 'admin';\""
     sudo /bin/sh -c "mysql -e \"FLUSH PRIVILEGES;\""
+    initMessage "Default website can be found at http://localhost"
+
     menu
 }
 
 
 function createDomainForUser {
     initMessage "Creating user website"
-    echo "Select user from users!"
-    echo ""
-    echo "Users:"
-    counter=1
-    declare -A availableUsers
-    while IFS= read -r line; do
-        availableUsers[$counter]=$line
-        echo "   $counter) $line"
-        counter=$((counter+1))
-    done <<< "$(sudo cat /var/www/.users)"
 
-    counter=$((counter-1))
-
-    
-    until [[ ${pickedUser} =~ ^[1-$counter]$ ]]; do
-        read -p "Select user [1-$counter]: " -r -n 1 pickedUser
+    if [ $# -eq 0 ]; then
+        echo "Select user from users!"
         echo ""
-    done
+        echo "Users:"
+        counter=1
+        declare -A availableUsers
+        while IFS= read -r line; do
+            availableUsers[$counter]=$line
+            echo "   $counter) $line"
+            counter=$((counter+1))
+        done <<< "$(sudo cat /var/www/.users)"
 
-    user=${availableUsers[$pickedUser]}
-    echo ""
+        counter=$((counter-1))
+
+        pickedUserNumber=false
+        pickedUser=0
+        until $pickedUserNumber; do
+            read -p "Select user [1-$counter]: " -r pickedUser
+            if [[ $pickedUser =~ ^[1-9][0-9]*$ ]] && [ "$pickedUser" -le "$counter" ] && [ "$pickedUser" -gt 0 ]; then
+                pickedUserNumber=true
+            fi
+            echo ""
+        done
+
+        user=${availableUsers[$pickedUser]}
+    else
+        user=$1
+    fi
     echo -e "User ${TURQUOISE}$user${ENDCOLOR} selected."
     echo ""
     echo "Enter the domain name without .tld"
@@ -163,8 +153,14 @@ function createDomainForUser {
         read -p "Enter domain name [google]: " -r domainName
         echo ""
     done
-    
+
     domain="$domainName.$user.localhost"
+    domainCheck=$(sudo ls /var/www/"$user" | grep -c "$domain")
+    if [ "${domainCheck}" -eq 1 ]; then
+        echo "Domain already exists!"
+        exit 1
+    fi
+
     sudo cp ./lib/domain.conf /etc/apache2/sites-available/"$domain".conf
     
     sudo sed -i "s/%domain_name%/$domain/g" /etc/apache2/sites-available/"$domain".conf
@@ -175,41 +171,44 @@ function createDomainForUser {
     initMessage "Test website is located at http://$domain and it's folder is in /var/www/$user/$domain"
 
     db_password=$(openssl rand -base64 8)
+    db_name="$user"_"$domainName"
     sudo mkdir /var/www/"$user"/"$domain"
     sudo cp ./lib/index.php /var/www/"$user"/"$domain"/
-    chown -R "$user":www-data /var/www/"$user"
     sudo sed -i "s/%user%/$user/g" /var/www/"$user"/"$domain"/index.php
     sudo sed -i "s/%password%/$db_password/g" /var/www/"$user"/"$domain"/index.php
-    sudo sed -i "s/%databaseName%/$domainName/g" /var/www/"$user"/"$domain"/index.php
+    sudo sed -i "s/%databaseName%/$db_name/g" /var/www/"$user"/"$domain"/index.php
+    sudo chown -R "$user":www-data /var/www/"$user"
 
-    sudo /bin/sh -c "mysql -e \"CREATE DATABASE $domainName\""
-    sudo /bin/sh -c "mysql -e \"GRANT ALL PRIVILEGES ON $user.* TO '$user'@'localhost' IDENTIFIED BY '$db_password';\""
+    sudo /bin/sh -c "mysql -e \"CREATE DATABASE $db_name\""
+    sudo /bin/sh -c "mysql -e \"GRANT ALL PRIVILEGES ON $db_name.* TO '$user'@'localhost' IDENTIFIED BY '$db_password';\""
     sudo /bin/sh -c "mysql -e \"FLUSH PRIVILEGES;\""
+    exit 0
 }
 
 function addUser {
     initMessage "Adding new user"
+    username=""
     until [[ ${username} =~ ^[a-z0-9]+$ ]]; do
         read -p "Enter username [lowercase]: " -r username
     done
-    echo ""
-    until [[ ${nameSurname} =~ ^[a-zA-Z]+$ ]]; do
-        read -p "Enter your name and surname: " -r nameSurname
-    done
+
+    if [ "$(grep -c -e "^$username:" /etc/passwd)" -ne 0 ]; then
+        echo -e "Uzivatel ${RED}$username${ENDCOLOR} uz existuje."
+        menu
+    fi
     echo ""
     
     sudo mkdir /var/www/"${username}"/
-    sudo useradd -c "${nameSurname}" -d /var/www/"${username}" -s /bin/bash "${username}"
+    sudo useradd -d /var/www/"${username}" -s /bin/bash "${username}"
     sudo chown -R "${username}":www-data /var/www/"${username}"
     sudo chmod -R 750 /var/www/"${username}"
     
     echo "Please enter password for ${username}"
     sudo passwd "${username}"
     outputParser $? "User created successfully." "An error occured while creating user. Reffer to error."
-    echo "$username" | sudo tee -a /var/www/.users
+    echo "$username" | sudo tee -a /var/www/.users > /dev/null
     
-    createDomainForUser    
-    
+    createDomainForUser "$username"
 }
 
 function removeUser {
@@ -227,8 +226,13 @@ function removeUser {
 
     counter=$((counter-1))
 
-    until [[ ${pickedUser} =~ ^[1-$counter]$ ]]; do
-        read -p "Select user [1-$counter]: " -r -n 1 pickedUser
+    pickedUserNumber=false
+    pickedUser=0
+    until $pickedUserNumber; do
+        read -p "Select user [1-$counter]: " -r pickedUser
+        if [[ $pickedUser =~ ^[1-9][0-9]*$ ]] && [ "$pickedUser" -le "$counter" ] && [ "$pickedUser" -gt 0 ]; then
+            pickedUserNumber=true
+        fi
         echo ""
     done
 
@@ -236,6 +240,14 @@ function removeUser {
     echo ""
     echo -e "User ${TURQUOISE}$user${ENDCOLOR} selected."
     echo ""
+    sudo userdel -r "$user"
+    outputParser $? "User removed successfully." "An error occured while removing user. Reffer to error."
+    sudo sed -i "/$user/d" /var/www/.users
+    sudo rm -rf /var/www/"$user"
+    sudo a2dissite *."$user".localhost.conf
+    sudo systemctl reload apache2
+    outputParser $? "User domains disabled successfully." "An error occured while disabling user domains. Reffer to error."
+    menu
 }
 
 function listUsers {
@@ -260,7 +272,7 @@ function listUsers {
 function uninstall {
     echo -e "${YELLOW} - Uninstalling web server (apache2, php and mariaDB)${ENDCOLOR}"
     sudo rm -rf /etc/apache2/.installedWithAWI
-    sudo apt purge apache2 php php* mariadb-server -y
+    sudo apt purge apache2 php* mariadb-server -y
     sudo apt autoremove -y
     outputParser $? "Web server uninstalled successfully." "An error occured while uninstalling web server. Reffer to error."
 }

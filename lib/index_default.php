@@ -1,8 +1,8 @@
 <?php 
 const DB_SERVER = 'localhost';
-const DB_USERNAME = 'webadmin';
-const DB_PASSWORD = 'webadmin';
-const DB_NAME = 'webadmin';
+const DB_USERNAME = 'admin';
+const DB_PASSWORD = 'admin';
+const DB_NAME = 'admin';
 
 $db_handler = new mysqli(DB_SERVER, DB_USERNAME, DB_PASSWORD, DB_NAME);
 if ($db_handler->connect_error) {
