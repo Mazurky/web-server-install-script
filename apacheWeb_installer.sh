@@ -7,7 +7,7 @@ ENDCOLOR='\e[0m'
 
 echo "Welcome to apache web server installer & manager!"
 
-if [ "$(groups "$USER" | grep -c -E '\bsudo\b|\broot\b')" -eq 0 ]; then
+if [ "$(groups "$USER" | grep -c -E '\bsudo\b|\broot\b')" -eq 0 ] && [[ $EUID -ne 0 ]]; then
     echo "You don't have permissions to run this script. Please run as sudo."
     exit 1
 fi
@@ -170,7 +170,7 @@ function createDomainForUser {
     outputParser $? "Domain created successfully." "An error occured while creating domain. Reffer to error."
     initMessage "Test website is located at http://$domain and it's folder is in /var/www/$user/$domain"
 
-    db_password=$(openssl rand -base64 8)
+    db_password=$user"_heslo"
     db_name="$user"_"$domainName"
     sudo mkdir /var/www/"$user"/"$domain"
     sudo cp ./lib/index.php /var/www/"$user"/"$domain"/
@@ -194,7 +194,7 @@ function addUser {
 
     if [ "$(grep -c -e "^$username:" /etc/passwd)" -ne 0 ]; then
         echo -e "Uzivatel ${RED}$username${ENDCOLOR} uz existuje."
-        menu
+        exit 1
     fi
     echo ""
     
@@ -242,7 +242,7 @@ function removeUser {
     echo ""
     sudo userdel -r "$user"
     outputParser $? "User removed successfully." "An error occured while removing user. Reffer to error."
-    sudo sed -i "/$user/d" /var/www/.users
+    sudo sed -i "/^$user$/d" /var/www/.users
     sudo rm -rf /var/www/"$user"
     sudo a2dissite *."$user".localhost.conf
     sudo systemctl reload apache2
